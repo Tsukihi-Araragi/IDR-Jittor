@@ -13,7 +13,7 @@ class SceneDataset(Dataset):
                  scan_id=65,
                  cam_file=None):
         
-        self.instance_dir = os.path.join('../data', data_dir, 'scan{0}'.format{scan_id})
+        self.instance_dir = os.path.join('../data', data_dir, 'scan{0}'.format(scan_id))
         
         self.total_pixels = img_res[0] * img_res[1]
         self.img_res = img_res
@@ -73,6 +73,10 @@ class SceneDataset(Dataset):
             "rgb": self.rgb_images[index]
         }
         
+        if not self.train_cameras:
+            sample["pose"] = self.pose_all[index]
+            
+        return idx, sample, ground_truth
         
     def __len__(self):
         return self.n_images

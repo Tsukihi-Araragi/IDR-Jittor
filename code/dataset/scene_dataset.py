@@ -76,7 +76,7 @@ class SceneDataset(Dataset):
         if not self.train_cameras:
             sample["pose"] = self.pose_all[index]
             
-        return idx, sample, ground_truth
+        return index, sample, ground_truth
         
     def __len__(self):
         return self.n_images

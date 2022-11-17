@@ -16,6 +16,7 @@ class Embedder:
         N_freqs = self.kwargs['num_freqs']
         
         freq_bands = 2. ** jt.linspace(0., max_freq, N_freqs)
+        print("freq_bands: ", freq_bands)
         for freq in freq_bands:
             for p_fn in self.kwargs['periodic_fns']:
                 embed_fns.append(lambda x, p_fn=p_fn, freq=freq: p_fn(x * freq))

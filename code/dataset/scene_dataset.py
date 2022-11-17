@@ -1,8 +1,13 @@
+if __name__ == "__main__":
+    import sys
+    sys.path.append('/mnt/d/pancheng/Project/IDR-Jittor/code')
+    
+    
 import jittor as jt
 import os
 import numpy as np
 from utils import rend_util
-from jittor.dataset import Dataset
+from jittor.dataset.dataset import Dataset
 import utils.general as utils
 
 class SceneDataset(Dataset):
@@ -11,10 +16,10 @@ class SceneDataset(Dataset):
                  data_dir,
                  img_res,
                  scan_id=65,
-                 cam_file=None):
-        
+                 cam_file=None, batch_size=1):
+        super().__init__()
         self.instance_dir = os.path.join('../data', data_dir, 'scan{0}'.format(scan_id))
-        
+        self.batch_size = batch_size
         self.total_pixels = img_res[0] * img_res[1]
         self.img_res = img_res
         
@@ -25,7 +30,7 @@ class SceneDataset(Dataset):
         image_dir = '{0}/image'.format(self.instance_dir)
         image_paths = sorted(utils.glob_imgs(image_dir))
         mask_dir = '{0}/mask'.format(self.instance_dir)
-        mask_paths = sorted(utils.glob(mask_dir))
+        mask_paths = sorted(utils.glob_imgs(mask_dir))
         
         self.n_images = len(image_paths)
         
@@ -58,6 +63,9 @@ class SceneDataset(Dataset):
             object_mask = object_mask.reshape(-1)
             self.object_masks.append(jt.array(object_mask).bool())
             
+        # print("self.rgb_images.shape:    ", self.rgb_images[0].shape)
+        # print("self.object_masks.shape:    ", self.object_masks[0].shape)
+        
     def __getitem__(self, index):
         uv = np.mgrid[0:self.img_res[0], 0:self.img_res[1]].astype(np.int32)
         uv = jt.array(np.flip(uv, axis=0).copy()).float()
@@ -80,3 +88,13 @@ class SceneDataset(Dataset):
         
     def __len__(self):
         return self.n_images
+
+
+# dataloader = SceneDataset(True, 'DTU', [1200, 1600], 65, batch_size=2)
+# for data_index, (idx, model_input, ground_truth) in enumerate(dataloader):
+#     print("data_index: ", data_index)
+#     print("idx: ", idx)
+#     print("object_mask: ", model_input['object_mask'].size())
+#     print("uv: ", model_input['uv'].size())
+#     print("intrinsics: ", model_input['intrinsics'].size())
+    

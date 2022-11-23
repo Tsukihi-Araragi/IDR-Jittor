@@ -1,14 +1,18 @@
+if __name__ == "__main__":
+    import sys
+    sys.path.append('/mnt/d/pancheng/Project/IDR-Jittor/code')
 import jittor as jt
 from jittor import Module
 from jittor import nn
 from jittor import init
 import numpy as np
-
-if __name__ == "__main__":
-    import sys
-    sys.path.append('/mnt/d/pancheng/Project/IDR-Jittor/code')
-    
+from dataset import scene_dataset
+from utils import rend_util
+from ray_tracing import RayTracing
+from sample_network import SampleNetwork
 from model.embedder import get_embedder
+
+jt.flags.use_cuda = True
 class ImplicitNetwork(Module):
     def __init__(self, 
                  feature_vector_size,
@@ -155,26 +159,107 @@ class IDRNetwork(Module):
         super().__init__()
         self.feature_vector_size = conf.get_int('feature_vector_size')
         self.implicit_network = ImplicitNetwork(self.feature_vector_size, **conf.get_config('implicit_network'))
+        self.ray_tracer = RayTracing(**conf.get_config('ray_tracer'))
+        self.sample_network = SampleNetwork()
+        self.object_bounding_sphere = conf.get_float('ray_tracer.object_bounding_sphere')
+        
+    def execute(self):
+        intrinsics = input["intrinsics"]
+        uv = input["uv"]
+        pose = input["pose"]
+        object_mask = input["object_mask"].reshape(-1)
+
+        ray_dirs, cam_loc = rend_util.get_camera_params(uv, pose, intrinsics)
+
+        batch_size, num_pixels, _ = ray_dirs.shape(-1)
+        
+        self.implicit_network.eval()
+        
+        with jt.no_grad():
+            points, network_object_mask, dists = self.ray_tracer(sdf=lambda x: self.implicit_network(x)[:, 0],
+                                                                 cam_loc=cam_loc,
+                                                                 object_mask=object_mask,
+                                                                 ray_directions=ray_dirs)
+        
+        self.implicit_network.train()
+        points = (cam_loc.unsqueeze(1) + dists.reshape(batch_size, num_pixels, 1) * ray_dirs).reshape(-1, 3)
+
+        sdf_output = self.implicit_network(points)[:, 0:1]
+        ray_dirs = ray_dirs.reshape(-1, 3)
+        
+        if self.training:
+            surface_mask = network_object_mask & object_mask
+            surface_points = points[surface_mask]
+            surface_dists = dists[surface_mask].unsqueeze(-1)
+            surface_ray_dirs = ray_dirs[surface_mask]
+            surface_cam_loc = cam_loc.unsqueeze(1).repeat(1, num_pixels, 1).reshape(-1, 3)[surface_mask]
+            surface_output = sdf_output[surface_mask]
+            N = surface_points.shape[0]
+        
+            # Sample points for the eikonal loss
+            eik_bounding_box = self.object_bounding_sphere
+            n_eik_points = batch_size * num_pixels // 2
+            eikonal_points = jt.empty(n_eik_points, 3).uniform_(-eik_bounding_box, eik_bounding_box).cuda()
+            eikonal_pixel_points = points.clone()
+            eikonal_pixel_points = eikonal_pixel_points.detach()
+            eikonal_points = jt.cat([eikonal_points, eikonal_pixel_points], 0)
+
+            points_all = jt.cat([surface_points, eikonal_points], dim=0)
+
+            output = self.implicit_network(surface_points)
+            surface_sdf_values = output[:N, 0:1].detach()
+
+            g = self.implicit_network.gradient(points_all)
+            surface_points_grad = g[:N, 0, :].clone().detach()
+            grad_theta = g[N:, 0, :]
+
+            differentiable_surface_points = self.sample_network(surface_output,
+                                                                surface_sdf_values,
+                                                                surface_points_grad,
+                                                                surface_dists,
+                                                                surface_cam_loc,
+                                                                surface_ray_dirs)
+
+        else:
+            surface_mask = network_object_mask
+            differentiable_surface_points = points[surface_mask]
+            grad_theta = None
+        # dataloader = scene_dataset.SceneDataset(False, 'DTU', [1200, 1600], 65, batch_size=2)
+        # for data_index, (idx, model_input, ground_truth) in enumerate(dataloader):
+        #     print("data_index: ", data_index)
+        #     print("idx: ", idx)
+        #     print("object_mask: ", model_input['object_mask'].size())
+        #     print("uv: ", model_input['uv'].size())
+        #     print("intrinsics: ", model_input['intrinsics'].size())
+        #     print("pose: ", model_input['pose'].size())
+            
+        #     ray_dirs, cam_loc = rend_util.get_camera_params(model_input['uv'], model_input['pose'], model_input['intrinsics'])
+        #     print("ray_dirs: ", ray_dirs.size())
+        #     print("cam_loc: ", cam_loc.size())
+        #     print(cam_loc, ray_dirs[0][0])
+        
 
 
+# model = ImplicitNetwork(256, 3, 1, [ 512, 512, 512, 512, 512, 512, 512, 512 ], True, 0.6, [4], 6)
+# input = jt.rand(1, 3)
+# input = jt.array((1., 2., 3., 1., 2., 3.)).reshape(2, 3)
+# print(input.size())
+# print("input, input: ", input)
 
-model = ImplicitNetwork(256, 3, 1, [ 512, 512, 512, 512, 512, 512, 512, 512 ], True, 0.6, [4], 6)
-input = jt.rand(1, 3)
-input = jt.array((1., 2., 3., 1., 2., 3.)).reshape(2, 3)
-print(input.size())
-print("input, input: ", input)
+# # input[0] = -0.4182
+# # input[1] = -0.9914
+# # input[2] = -0.3587
+# # # input = jt.Var(-0.4182, -0.9914, -0.3587)
+# # input[0] = -input[0]
+# print("input: ", input)
+# output = model(input)
+# print("output.size(): ", output.size())
 
-# input[0] = -0.4182
-# input[1] = -0.9914
-# input[2] = -0.3587
-# # input = jt.Var(-0.4182, -0.9914, -0.3587)
-# input[0] = -input[0]
-print("input: ", input)
-output = model(input)
-print("output.size(): ", output.size())
-
-print(jt.max(output, 1), jt.min(input, 1))
-print(jt.grad(output[:, :1], input))
-print(model.gradient(input))
+# print(jt.max(output, 1), jt.min(input, 1))
+# print(jt.grad(output[:, :1], input))
+# print(model.gradient(input))
 
 
+model = IDRNetwork(None)
+
+model.execute()
